@@ -1,44 +1,28 @@
 import numpy as np
 import perceval as pcvl
 import perceval.components as comp
-from perceval.algorithm import Sampler, Simulator
+from perceval.algorithm import Sampler
 from itertools import permutations
 import matplotlib.pyplot as plt
 
 
-class PhotonicPermanentExperiment:
+class PhotonicExperiment:
 
-    def __init__(self, theta1=0.4, theta2=0.7, theta3=0.5, modes=3):
-        self.theta1 = theta1
-        self.theta2 = theta2
-        self.theta3 = theta3
-        self.modes = modes
-        self._build_circuit()
-
-    # -------------------------------------------------------
-    # Build physical circuit
-    # -------------------------------------------------------
-
-    def _build_circuit(self):
-
-        c = pcvl.Circuit(self.modes)
-
-        c.add(0, comp.BS(self.theta1))
-        c.add(1, comp.BS(self.theta2))
-        c.add(0, comp.BS(self.theta3))
-
-        self.circuit = c
-        self.unitary = np.array(c.compute_unitary())
+    def __init__(self, circuit: pcvl.Circuit, input_state: pcvl.BasicState):
+        self.circuit = circuit
+        self.input_state = input_state
+        self.modes = circuit.m
+        self.unitary = np.array(circuit.compute_unitary())
 
     # -------------------------------------------------------
-    # Draw circuit
+    # DRAW CIRCUIT
     # -------------------------------------------------------
 
     def draw(self):
         return self.circuit.draw()
 
     # -------------------------------------------------------
-    # Compute permanent (brute force)
+    # PERMANENT (brute force, small n only)
     # -------------------------------------------------------
 
     def permanent(self, A):
@@ -52,51 +36,50 @@ class PhotonicPermanentExperiment:
         return total
 
     # -------------------------------------------------------
-    # Extract 3x3 submatrix (all modes here)
+    # EXTRACT SUBMATRIX FOR GIVEN INPUT/OUTPUT MODES
     # -------------------------------------------------------
 
-    def submatrix(self):
-        return self.unitary
+    def extract_submatrix(self, input_modes, output_modes):
+        A = np.zeros((len(output_modes), len(input_modes)), dtype=complex)
+        for i, r in enumerate(output_modes):
+            for j, s in enumerate(input_modes):
+                A[i, j] = self.unitary[r, s]
+        return A
 
     # -------------------------------------------------------
-    # Compute ideal quantum probability
+    # IDEAL QUANTUM PROBABILITY
     # -------------------------------------------------------
 
-    def quantum_probability(self):
-
-        A = self.submatrix()
+    def quantum_probability(self, input_modes, output_modes):
+        A = self.extract_submatrix(input_modes, output_modes)
         perm = self.permanent(A)
         return abs(perm)**2
 
     # -------------------------------------------------------
-    # Compute distinguishable probability
+    # DISTINGUISHABLE PROBABILITY
     # -------------------------------------------------------
 
-    def distinguishable_probability(self):
-
+    def distinguishable_probability(self, input_modes, output_modes):
         U = self.unitary
         T = abs(U)**2
-
         total = 0
-        for p in permutations(range(3)):
+        for p in permutations(range(len(input_modes))):
             prod = 1
-            for i in range(3):
-                prod *= T[i, p[i]]
+            for i, r in enumerate(output_modes):
+                prod *= T[r, input_modes[p[i]]]
             total += prod
-
         return total
 
     # -------------------------------------------------------
-    # Perceval simulation
+    # PERCEVAL SAMPLING
     # -------------------------------------------------------
 
     def simulate(self, eta=1.0, shots=20000):
-
         noise = pcvl.NoiseModel(indistinguishability=eta, transmittance=1.0)
         proc = pcvl.Processor("SLOS", self.circuit, noise=noise)
 
-        proc.with_input(pcvl.BasicState([1,1,1]))
-        proc.min_detected_photons_filter(3)
+        proc.with_input(self.input_state)
+        proc.min_detected_photons_filter(sum(self.input_state))
 
         sampler = Sampler(proc)
         result = sampler.sample_count(shots)
@@ -110,19 +93,62 @@ class PhotonicPermanentExperiment:
         return probs
 
     # -------------------------------------------------------
-    # Sweep indistinguishability
+    # SWEEP INDISTINGUISHABILITY
     # -------------------------------------------------------
 
-    def sweep_eta(self, eta_values):
+    def sweep_eta(self, input_modes, output_modes, eta_values):
+        ideal = self.quantum_probability(input_modes, output_modes)
+        classical = self.distinguishable_probability(input_modes, output_modes)
 
-        ideal = self.quantum_probability()
-        classical = self.distinguishable_probability()
-
-        results = []
+        simulated = []
 
         for eta in eta_values:
             probs = self.simulate(eta)
-            target = probs.get(str(pcvl.BasicState([1,1,1])), 0)
-            results.append(target)
+            key = str(pcvl.BasicState([1 if i in output_modes else 0 for i in range(self.modes)]))
+            simulated.append(probs.get(key, 0))
 
-        return ideal, classical, results
+        return ideal, classical, simulated
+
+    # -------------------------------------------------------
+    # LATEX: UNITARY MATRIX
+    # -------------------------------------------------------
+
+    def latex_unitary(self, precision=3):
+        U = self.unitary
+        rows = []
+        for row in U:
+            formatted = " & ".join(
+                f"{np.round(val.real,precision)}"
+                + (f"+{np.round(val.imag,precision)}i" if abs(val.imag)>1e-6 else "")
+                for val in row
+            )
+            rows.append(formatted)
+
+        body = " \\\\\n".join(rows)
+
+        latex = "\\begin{pmatrix}\n" + body + "\n\\end{pmatrix}"
+        return latex
+
+    # -------------------------------------------------------
+    # LATEX: PERMANENT EXPANSION
+    # -------------------------------------------------------
+
+    def latex_permanent_expansion(self, input_modes, output_modes):
+        A = self.extract_submatrix(input_modes, output_modes)
+        n = A.shape[0]
+
+        terms = []
+        for p in permutations(range(n)):
+            factors = []
+            for i in range(n):
+                factors.append(f"U_{{{output_modes[i]+1},{input_modes[p[i]]+1}}}")
+            terms.append(" ".join(factors))
+
+        expansion = " + \n".join(terms)
+
+        latex = "\\begin{align}\n"
+        latex += "\\mathrm{Perm}(U) =\n"
+        latex += expansion
+        latex += "\n\\end{align}"
+
+        return latex
