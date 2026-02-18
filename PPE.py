@@ -15,11 +15,15 @@ class PhotonicExperiment:
         self.unitary = np.array(circuit.compute_unitary())
 
     # -------------------------------------------------------
-    # DRAW CIRCUIT
+    # DRAW CIRCUIT (version-safe)
     # -------------------------------------------------------
 
     def draw(self):
-        return self.circuit.draw()
+        try:
+            return pcvl.pdisplay(self.circuit)
+        except Exception:
+            print("Diagram display not supported in this environment.")
+
 
     # -------------------------------------------------------
     # PERMANENT (brute force, small n only)
@@ -152,3 +156,39 @@ class PhotonicExperiment:
         latex += "\n\\end{align}"
 
         return latex
+
+
+
+# Example 3-mode circuit
+c = pcvl.Circuit(3)
+c.add(0, comp.BS(0.4))
+c.add(1, comp.BS(0.7))
+c.add(0, comp.BS(0.5))
+
+input_state = pcvl.BasicState([1,1,1])
+
+exp = PhotonicExperiment(c, input_state)
+
+exp.draw()
+
+A = exp.extract_submatrix([0,1,2], [0,1,2])
+print(A)
+
+
+print("Permanent:", exp.permanent(A))
+print("Quantum probability:", exp.quantum_probability([0,1,2],[0,1,2]))
+print("Distinguishable probability:", exp.distinguishable_probability([0,1,2],[0,1,2]))
+
+
+etas = np.linspace(1,0,6)
+ideal, classical, sim = exp.sweep_eta([0,1,2],[0,1,2],etas)
+
+plt.plot(etas, sim, marker='o')
+plt.axhline(ideal, linestyle='--', label='Ideal')
+plt.axhline(classical, linestyle='--', label='Classical')
+plt.legend()
+plt.show()
+
+print(exp.latex_unitary())
+
+print(exp.latex_permanent_expansion([0,1,2],[0,1,2]))
